@@ -68,11 +68,19 @@ jobs:
           git -c filter.lfs.smudge= -c filter.lfs.process= -c filter.lfs.required=false checkout -q FETCH_HEAD
           test "$(git rev-parse HEAD)" = "$COMMIT"
 
-      # Electron release assets (Electron's libc++ for setup-env.sh's libcxx-fetcher, the Electron zip for gulp) are
-      # fetched by @electron/get from https://github.com/electron/electron/releases/download/v<version>/…, which
-      # returns 504 for most assets of this release, and @electron/get's stream download never retries. Fetch the
-      # same files through the GitHub API into @electron/get's own cache instead; it then uses them and still
-      # verifies them against the release's SHASUMS256.txt. Cached across runs.
+      # Every Electron release asset the Linux build downloads comes from
+      # https://github.com/electron/electron/releases/download/v<version>/<file>, which returns 504 for most assets of
+      # this release. The complete list, traced in the pinned source:
+      #   setup-env.sh -> build/linux/libcxx-fetcher.ts (@electron/get 2):  libcxx-objects-v<V>-linux-x64.zip,
+      #                                                    libcxx_headers.zip, libcxxabi_headers.zip (+ SHASUMS256.txt)
+      #   npm ci postinstall -> build/npm/electronTypes.ts (fetch):          electron.d.ts
+      #   gulp -> @vscode/gulp-electron (@electron/get 5; ffmpegChromium is off, no symbols, no artifact feed):
+      #                                                                      electron-v<V>-linux-x64.zip (+ SHASUMS256.txt)
+      # Fetch them through the GitHub API instead (cached across runs), each checked against the pinned
+      # build/checksums/electron.txt. electronTypes.ts takes electron.d.ts from its own cache file, .build/typings/electron.d.ts.
+      # @electron/get's cache can't cover it: version 5 always downloads SHASUMS256.txt again (cacheMode Bypass), so
+      # the build step serves this folder on localhost and points both @electron/get versions at it with
+      # ELECTRON_MIRROR; they still verify every file against the served SHASUMS256.txt.
       - name: Electron version
         id: electron
         run: echo "version=$(sed -n 's/^target="\(.*\)"$/\1/p' vscode-fork/.npmrc)" >> "$GITHUB_OUTPUT"
@@ -81,38 +89,51 @@ jobs:
         id: electron-cache
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/electron
-          key: electron-assets-linux-x64-${{ steps.electron.outputs.version }}
+          path: ~/electron-mirror
+          key: electron-mirror-linux-x64-${{ steps.electron.outputs.version }}-${{ hashFiles('vscode-fork/build/checksums/electron.txt') }}
 
+      # Runs on a cache hit too: files already present and matching the pinned checksums are skipped, anything
+      # missing or wrong is downloaded, so an incomplete cache can't break the build.
       - name: Prefetch Electron release assets through the GitHub API
-        if: steps.electron-cache.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           V: ${{ steps.electron.outputs.version }}
         run: |
           test -n "$V"
-          # @electron/get's cache folder for these URLs: sha256 of the release download URL without the file name.
-          DIR="$HOME/.cache/electron/$(printf %s "https://github.com/electron/electron/releases/download/v$V" | sha256sum | cut -d' ' -f1)"
-          mkdir -p "$DIR"
-          for f in SHASUMS256.txt "libcxx-objects-v$V-linux-x64.zip" libcxx_headers.zip libcxxabi_headers.zip "electron-v$V-linux-x64.zip"; do
+          PINNED="$PWD/vscode-fork/build/checksums/electron.txt"
+          pinned() { awk -v f="*$1" '$2 == f { print $1 }' "$PINNED"; }
+          ok() { [ -f "$DIR/$1" ] && [ "$(sha256sum "$DIR/$1" | cut -d' ' -f1)" = "$(pinned "$1")" ]; }
+          # SHASUMS256.txt isn't in the pinned list: it is right if it agrees with it for every file below.
+          sums_ok() { [ -f "$DIR/SHASUMS256.txt" ] && for g in $FILES; do
+            [ "$(awk -v f="*$g" '$2 == f { print $1 }' "$DIR/SHASUMS256.txt")" = "$(pinned "$g")" ] || return 1; done; }
+          fetch() {
             for i in 1 2 3 4 5; do
-              gh release download "v$V" --repo electron/electron --pattern "$f" --dir "$DIR" --clobber && break
-              if [ "$i" = 5 ]; then echo "Could not download $f" >&2; exit 1; fi
+              gh release download "v$V" --repo electron/electron --pattern "$1" --dir "$DIR" --clobber && return 0
+              if [ "$i" = 5 ]; then echo "Could not download $1" >&2; exit 1; fi
               sleep $((5 * 2 ** i))
             done
+          }
+          FILES="libcxx-objects-v$V-linux-x64.zip libcxx_headers.zip libcxxabi_headers.zip electron.d.ts electron-v$V-linux-x64.zip"
+          for f in $FILES; do test -n "$(pinned "$f")" || { echo "$f is not in $PINNED" >&2; exit 1; }; done
+          # Same layout as the release download URL: <mirror>/v<version>/<file>.
+          DIR="$HOME/electron-mirror/v$V"
+          mkdir -p "$DIR"
+          for f in $FILES; do
+            if ok "$f"; then echo "cached: $f"; continue; fi
+            fetch "$f"
+            ok "$f" || { echo "$f does not match $PINNED" >&2; exit 1; }
           done
-          cd "$DIR"
-          grep -E " \*(libcxx-objects-v$V-linux-x64\.zip|libcxx_headers\.zip|libcxxabi_headers\.zip|electron-v$V-linux-x64\.zip)$" SHASUMS256.txt > expected.sha256
-          test "$(wc -l < expected.sha256)" = 4
-          sha256sum -c expected.sha256
-          rm expected.sha256
+          if ! sums_ok; then fetch SHASUMS256.txt; sums_ok || { echo "SHASUMS256.txt disagrees with $PINNED" >&2; exit 1; }; fi
+          # electronTypes.ts skips its download when this file exists with the pinned checksum.
+          mkdir -p vscode-fork/.build/typings
+          cp "$DIR/electron.d.ts" vscode-fork/.build/typings/electron.d.ts
 
       - name: Save Electron download cache
         if: steps.electron-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ~/.cache/electron
-          key: electron-assets-linux-x64-${{ steps.electron.outputs.version }}
+          path: ~/electron-mirror
+          key: electron-mirror-linux-x64-${{ steps.electron.outputs.version }}-${{ hashFiles('vscode-fork/build/checksums/electron.txt') }}
 
       - name: Code - OSS build-script dependencies (needed by setup-env.sh)
         working-directory: vscode-fork/build
@@ -125,7 +146,27 @@ jobs:
           VSCODE_ARCH: x64
           npm_config_arch: x64
           GITHUB_TOKEN: ${{ github.token }}
+          V: ${{ steps.electron.outputs.version }}
         run: |
+          # The prefetched Electron release assets, served locally for @electron/get (see the prefetch step).
+          python3 -m http.server 8597 --bind 127.0.0.1 --directory "$HOME/electron-mirror" > /dev/null 2>&1 &
+          trap "kill $! 2> /dev/null" EXIT
+          MIRROR_PID=$!
+          for i in $(seq 30); do
+            curl -fsI "http://127.0.0.1:8597/v$V/SHASUMS256.txt" > /dev/null && break
+            if ! kill -0 "$MIRROR_PID" 2> /dev/null; then
+              echo "The local Electron mirror (python3 -m http.server on 127.0.0.1:8597) exited while starting. Is the port already in use?" >&2
+              exit 1
+            fi
+            if [ "$i" = 30 ]; then
+              echo "The local Electron mirror did not serve http://127.0.0.1:8597/v$V/SHASUMS256.txt within 30 seconds." >&2
+              echo "Check that the prefetch step filled $HOME/electron-mirror/v$V:" >&2
+              ls -la "$HOME/electron-mirror/v$V" >&2 || true
+              exit 1
+            fi
+            sleep 1
+          done
+          export ELECTRON_MIRROR=http://127.0.0.1:8597/
           # One shell: setup-env.sh exports CC, CXX, CXXFLAGS and LDFLAGS (and writes ~/.gyp/include.gypi), and they
           # apply to everything below, including the npm ci of Code - OSS that build.mjs runs before gulp.
           cd vscode-fork

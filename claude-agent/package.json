@@ -2,7 +2,7 @@
   "name": "claude-agent",
   "displayName": "Claude Agent",
   "description": "Claude Code agent panel with inline review of every change, plus the Claude IDE Dark theme",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "publisher": "local",
   "license": "MIT",
   "private": true,
@@ -325,9 +325,9 @@
         },
         "claudeIde.experimental.remoteSsh": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "application",
-          "markdownDescription": "Experimental: use Claude in Remote-SSH windows. Claude and your sign-in stay on this computer; files, commands and git run on the remote host through the claude-agent-remote extension (install 0.6.0 there). Reload the window after changing. When off, Remote-SSH windows show a notice instead."
+          "markdownDescription": "Use Claude in Remote-SSH windows. Claude and your sign-in stay on this computer; files, commands and git run on the remote host through the claude-agent-remote extension, which comes with the Claude IDE server. Reload the window after changing. When off, Remote-SSH windows show a notice instead."
         },
         "claudeIde.resumeLastConversation": {
           "type": "boolean",

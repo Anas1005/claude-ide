@@ -45,6 +45,8 @@ execSync('npm run build', { cwd: EXT, stdio: 'inherit' });
     win32ShellNameShort: 'Claude &IDE', win32MutexName: 'claudeide', win32TunnelServiceMutex: 'claudeide-tunnelservice', win32TunnelMutex: 'claudeide-tunnel',
     win32x64AppId: '{{9BD24168-5CB6-428A-8C08-85F57DDE103B}', win32arm64AppId: '{{C4D5519B-63A8-4862-8439-CD8A77817F7C}',
     win32x64UserAppId: '{{21B95B1A-8A5C-4F7F-A7C8-D026986005B4}', win32arm64UserAppId: '{{647CAD24-8854-429F-988F-BB077A73AA89}',
+    // Microsoft Remote-SSH 0.113.1 is not built in: without this its resolver is refused ("CANNOT use API proposal").
+    extensionEnabledApiProposals: { 'ms-vscode-remote.remote-ssh': ['resolvers', 'tunnels', 'terminalDataWriteEvent', 'contribViewsRemote', 'telemetry', 'contribRemoteHelp'] },
     extensionsGallery: {
       serviceUrl: 'https://open-vsx.org/vscode/gallery', itemUrl: 'https://open-vsx.org/vscode/item',
       extensionUrlTemplate: 'https://open-vsx.org/vscode/gallery/{publisher}/{name}/latest', resourceUrlTemplate: 'https://open-vsx.org/vscode/unpkg/{publisher}/{name}/{version}/{path}',
@@ -119,6 +121,33 @@ patch('src/vs/workbench/workbench.common.main.ts',
   "import './contrib/chat/browser/chat.contribution.js';",
   "import './contrib/chat/browser/chat.contribution.js';\nimport './contrib/claudeReview/browser/claudeReview.contribution.js';", 'register review UI',
   /claudeReview\.contribution\.js/);
+
+// 2d. Remote-SSH: when the host can't download the server (Microsoft has none for this build), Remote-SSH asks the client
+// through _workbench.downloadResource and copies the file over with scp. Answer with the server inside this app.
+{
+  const rel = 'src/vs/workbench/api/node/extHostDownloadService.ts';
+  patch(rel, "import { tmpdir } from 'os';", "import { tmpdir } from 'os';\nimport { copyFile, existsSync } from 'fs';\nimport { promisify } from 'util';\nimport { IExtHostInitDataService } from '../common/extHostInitDataService.js';", 'server download imports', /IExtHostInitDataService/);
+  patch(rel, '@IExtHostCommands commands: IExtHostCommands\n', '@IExtHostCommands commands: IExtHostCommands,\n\t\t@IExtHostInitDataService initData: IExtHostInitDataService\n', 'server download service', /initData: IExtHostInitDataService/);
+  patch(rel, "const location = URI.file(join(tmpdir(), generateUuid()));\n",
+    "const location = URI.file(join(tmpdir(), generateUuid()));\n"
+    + "\t\t\tconst bundledServer = initData.environment.appRoot && join(initData.environment.appRoot.fsPath, 'server', 'vscode-server-linux-x64.tar.gz');\n"
+    + "\t\t\tif (bundledServer && initData.commit && resource.authority === 'update.code.visualstudio.com'\n"
+    + "\t\t\t\t&& new RegExp(`^/commit:${initData.commit}/server-linux-(legacy-)?x64/`).test(resource.path) && existsSync(bundledServer)) {\n"
+    + "\t\t\t\tawait promisify(copyFile)(bundledServer, location.fsPath); // a copy: Remote-SSH moves the file it gets\n"
+    + "\t\t\t\treturn location;\n"
+    + "\t\t\t}\n",
+    'serve bundled server', /bundledServer/);
+  // Remote-SSH treats bin/<server> as "installed" and moves bin/ first: repair an install interrupted during that move.
+  patch('resources/server/bin/code-server-linux.sh', 'ROOT="$(dirname "$(dirname "$(readlink -f "$0")")")"\n',
+    'ROOT="$(dirname "$(dirname "$(readlink -f "$0")")")"\n\n'
+    + '# Claude IDE: an install interrupted while being moved into place is removed, so the next connection reinstalls it.\n'
+    + 'if [ ! -x "$ROOT/node" ] || [ ! -d "$ROOT/node_modules" ] || [ ! -f "$ROOT/out/server-main.js" ] || [ ! -f "$ROOT/product.json" ]; then\n'
+    + '\techo "Incomplete Claude IDE server at $ROOT. Removing it; reconnect to install it again." >&2\n'
+    + '\tif basename "$ROOT" | grep -Eq "^[0-9a-f]{40}\\$" && [ "$(basename "$(dirname "$ROOT")")" = bin ]; then rm -rf "$ROOT"; fi\n'
+    + '\texit 1\n'
+    + 'fi\n',
+    'server install guard', /Incomplete Claude IDE server/);
+}
 
 // 3. Ship the extension built-in (prebuilt bundle, no runtime dependencies).
 {

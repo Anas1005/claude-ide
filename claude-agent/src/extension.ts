@@ -1128,7 +1128,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   revealPanelOnce(ctx);
   // Remote windows (SSH, WSL, containers, …): the agent runs on this machine and would act on local files, not the
   // remote project. Start nothing until remote support exists; the guard explains this in the panel.
-  const mode = workspaceMode(vscode.env.remoteName, cfg().get<boolean>('experimental.remoteSsh', false));
+  const mode = workspaceMode(vscode.env.remoteName, cfg().get<boolean>('experimental.remoteSsh', true));
   if (mode === 'guard') return registerRemoteGuard(ctx, vscode.env.remoteName!);
   const remote = mode === 'remoteSsh' ? createRemoteContext(ctx) : undefined;
   // Remote review state is kept under its own keys (remote URIs), never mixed with local paths.

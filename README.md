@@ -169,13 +169,15 @@ docs/                          screenshots, demo video and its source
 
 Before Claude edits a file, a `PreToolUse` hook records the original. The edit then happens for real, so Claude always sees a consistent disk. The review UI compares the original with the current file, and *Accept* / *Reject* either keep the new content or write the original back, per change or per file. Shell commands are handled the same way by diffing a workspace snapshot taken before and after each command.
 
-## Remote-SSH (experimental)
+## Remote-SSH
 
-Claude IDE can work on a project on a Linux machine over Remote-SSH while Claude, the Claude Code CLI and your sign-in stay on your computer. Enable it with `"claudeIde.experimental.remoteSsh": true` in your user settings, install the **claude-agent-remote** extension on the remote host (built from `claude-agent-remote/`, see below), and reload the window. Without the setting, remote windows show a notice and nothing starts.
+Claude IDE can work on a project on a Linux machine over Remote-SSH while Claude, the Claude Code CLI and your sign-in stay on your computer. Install Microsoft's Remote-SSH 0.113.1 from its VSIX once, then use **Remote-SSH: Connect to Host** as usual. The Linux x64 build carries the matching server with the **claude-agent-remote** extension built in and copies it to a Linux x64 host on first connect. To turn this off, set `"claudeIde.experimental.remoteSsh": false`; remote windows then show a notice and nothing starts.
 
 ```
 Claude (local CLI) ─ in-process MCP tools (local) ─ VS Code command bridge ─ claude-agent-remote (on the SSH host) ─ remote files, processes, git
 ```
+
+**Current limitations:** Microsoft's Remote-SSH 0.113.1 is installed once by hand from its VSIX on each client (it isn't on Open VSX, and Claude IDE doesn't ship it; its license terms still apply). The server is bundled only in the Linux x64 client build and only for Linux x64 hosts; arm64 and Alpine hosts, and Windows and macOS clients, aren't provisioned automatically. Remote-SSH runs in legacy mode (`remote.SSH.useExecServer` defaults to `false`), because Exec Server needs a CLI only Microsoft publishes. Its install script has no lock, so open a single window for a host's first connection. The Linux download is about 150 MB larger because it carries the server.
 
 - **15 tools**: `read_file` (text, and PNG/JPEG/GIF/WebP images up to 5 MB), `list_directory`, `stat`, `search_files` (by name and/or glob such as `**/*.ts`), `search_content`, `write_file`, `apply_patch`, `file_operation`, `execute_command`, `process_status`, `terminate_process`, `git_status`, `git_diff`, `git_log`, `git_operation`. Claude's local file and shell tools are switched off, so nothing happens on your computer by mistake.
 - **Any path on the remote host**, as with Claude Code itself: absolute paths anywhere (other projects included), paths relative to the workspace root, and `~`. No need to reopen the window on another folder. The remote user's own OS permissions are the boundary; symbolic links are resolved before any check.

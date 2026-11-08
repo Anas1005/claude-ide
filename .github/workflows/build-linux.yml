@@ -147,6 +147,8 @@ jobs:
           npm_config_arch: x64
           GITHUB_TOKEN: ${{ github.token }}
           V: ${{ steps.electron.outputs.version }}
+          # The app's identity on remote hosts (~/.claude-ide-server/bin/<commit>): one per build, so an upgrade installs its own server.
+          BUILD_SOURCEVERSION: ${{ github.sha }}
         run: |
           # The prefetched Electron release assets, served locally for @electron/get (see the prefetch step).
           python3 -m http.server 8597 --bind 127.0.0.1 --directory "$HOME/electron-mirror" > /dev/null 2>&1 &
@@ -177,6 +179,23 @@ jobs:
           node build/npm/preinstall.ts
           cd ..
           node scripts/build.mjs --arch x64 --package
+
+      - name: Check the bundled Remote-SSH server (Remote Agent inside, same commit as the app, starts)
+        run: |
+          TAR="$PWD/VSCode-linux-x64/resources/app/server/vscode-server-linux-x64.tar.gz"
+          ls -la "$TAR"
+          APP_COMMIT=$(node -p "require('./VSCode-linux-x64/resources/app/product.json').commit")
+          test "$APP_COMMIT" = "$GITHUB_SHA"
+          DIR=$(mktemp -d)
+          cd "$DIR"
+          tar -xzf "$TAR"
+          S=vscode-server-linux-x64
+          test -f "$S/extensions/claude-agent-remote/out/extension.js"
+          test "$(node -p "require('./$S/product.json').commit")" = "$APP_COMMIT"
+          "$S/bin/claude-ide-server" --start-server --host=127.0.0.1 --port=0 --without-connection-token --accept-server-license-terms > server.log 2>&1 &
+          for i in $(seq 30); do grep -q 'Extension host agent listening on' server.log && break; sleep 1; done
+          grep 'Extension host agent listening on' server.log || { cat server.log >&2; exit 1; }
+          pkill -f "$DIR/$S/out/server-main.js"
 
       - name: Launch test (window opens, Claude panel loads, no warnings)
         run: xvfb-run -a node scripts/smoke-test.mjs --arch x64

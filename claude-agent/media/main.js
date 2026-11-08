@@ -11,7 +11,8 @@ const h = (tag, attrs = {}, ...kids) => {
   for (const k of kids.flat()) if (k != null && k !== false) el.append(k instanceof Node ? k : document.createTextNode(String(k)));
   return el;
 };
-const send = (type, extra = {}) => vscode.postMessage({ type, ...extra });
+// Every message names the conversation shown when it was sent (the extension acts on that one, not on whichever is shown later).
+const send = (type, extra = {}) => vscode.postMessage({ type, conversationId: S.conversationId, ...extra });
 const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // ---------- Markdown (small subset: fences, inline code, bold, italic, headings, lists, links) ----------
@@ -64,7 +65,7 @@ function md(src) {
 }
 
 // ---------- State ----------
-const S = { commands: [], cmdIdx: 0, cmdMatches: [], refs: [], attach: false, activeFile: '', images: [], busy: false, files: [], stripOpen: false, stripIdx: 0, turn: null, stream: null, started: 0, sessions: [], models: [], showHistory: false };
+const S = { commands: [], cmdIdx: 0, cmdMatches: [], refs: [], attach: false, activeFile: '', selLines: null, selRemoved: '', images: [], busy: false, files: [], stripOpen: false, stripIdx: 0, turn: null, stream: null, started: 0, sessions: [], models: [], showHistory: false, conversationId: undefined, seq: 0, replaying: false, activity: [] };
 
 // ---------- Icons (inline SVG, follow currentColor) ----------
 const ICONS = {
@@ -113,6 +114,7 @@ app.append(
   h('div', { id: 'history', class: 'history hidden' },
     h('input', { id: 'search', placeholder: 'Search conversations…', oninput: () => renderHistory() }),
     h('div', { id: 'sessions' })),
+  h('div', { id: 'activity', class: 'activity hidden' }),
   h('main', { id: 'log' }),
   h('div', { id: 'strip', class: 'strip hidden' }),
   h('footer', {},
@@ -162,7 +164,7 @@ function submit() {
   const input = $('#input');
   const text = input.value.trim();
   if ((!text && !S.images.length && !S.refs.length) || S.busy) return;
-  send('send', { text: text || (S.images.length ? 'See the attached image.' : 'See the attached files.'), attach: S.attach, images: S.images, refs: S.refs.map(r => r.path) });
+  send('send', { text: text || (S.images.length ? 'See the attached image.' : 'See the attached files.'), attach: S.attach, images: S.images, refs: S.refs.map(r => r.path), selection: selShown() });
   input.value = '';
   autosize();
   S.images = [];
@@ -221,7 +223,10 @@ function chooseCommand(c, enter) {
   // Enter on a command that takes no arguments runs it right away, like the CLI.
   if (enter && !c.hint && !rest) submit();
 }
+let draftTimer;
+function saveDraft() { clearTimeout(draftTimer); draftTimer = setTimeout(() => send('draft', { text: $('#input').value }), 300); }
 function onInput(e) {
+  saveDraft();
   S.cmdIdx = 0;
   updateMenu();
   if (e.inputType === 'insertText' && e.data === '@') {
@@ -240,10 +245,17 @@ function readImage(file) {
   r.readAsDataURL(file);
   return true;
 }
+/** The editor selection chip: shown for a non-empty selection until removed (a new selection brings it back). */
+const selKey = () => (S.selLines ? `${S.activeFile}:${S.selLines[0]}-${S.selLines[1]}` : '');
+const selShown = () => !!S.selLines && S.selRemoved !== selKey();
 function renderAttachments() {
   const el = $('#attachments');
-  el.classList.toggle('hidden', !S.images.length && !S.refs.length);
+  const sel = selShown();
+  el.classList.toggle('hidden', !sel && !S.images.length && !S.refs.length);
   el.replaceChildren(
+    ...(sel ? [h('span', { class: 'ref sel', title: `Selected code in ${S.activeFile} is sent with your message` },
+      `📄 ${S.activeFile} · ${S.selLines[0] === S.selLines[1] ? `Line ${S.selLines[0]}` : `Lines ${S.selLines[0]}–${S.selLines[1]}`}`,
+      h('button', { class: 'icon', title: 'Remove selection', onclick: () => { S.selRemoved = selKey(); renderAttachments(); renderCtx(); } }, '✕'))] : []),
     ...S.refs.map((r, i) => h('span', { class: 'ref', title: r.path }, (r.isDir ? '📁 ' : '📄 ') + r.name,
       h('button', { class: 'icon', title: 'Remove', onclick: () => { S.refs.splice(i, 1); renderAttachments(); } }, '✕'))),
     ...S.images.map((img, i) => h('span', { class: 'thumb', title: img.name },
@@ -264,7 +276,7 @@ function onPaste(e) {
 
 function renderCtx() {
   const b = $('#ctx');
-  b.classList.toggle('hidden', !S.activeFile);
+  b.classList.toggle('hidden', !S.activeFile || selShown());   // a selection chip replaces the toggle
   b.classList.toggle('on', S.attach);
   b.replaceChildren(icon(S.attach ? 'file' : 'plus'), h('span', {}, S.activeFile));
   b.title = S.attach ? 'Current file is included — click to exclude' : 'Click to include the current file (and selection)';
@@ -353,7 +365,12 @@ function done(m) {
     $('.inner', box).append(...fold);
   }
   if (m.error) st.append(h('div', { class: 'step error' }, m.error));
-  if (!m.replay) {
+  if (!m.replay && S.replaying) {
+    // Rebuilding from a snapshot: keep the cost line, not the (stale) review buttons.
+    const meta = [m.cost != null && `$${m.cost.toFixed(4)}`, m.tokens && `${(m.tokens / 1000).toFixed(1)}k tokens`].filter(Boolean).join(' · ');
+    if (meta) st.append(h('div', { class: 'meta' }, meta));
+  }
+  if (!m.replay && !S.replaying) {
     const meta = [m.cost != null && `$${m.cost.toFixed(4)}`, m.tokens && `${(m.tokens / 1000).toFixed(1)}k tokens`].filter(Boolean).join(' · ');
     if (meta) st.append(h('div', { class: 'meta' }, meta));
     if (S.files.length) {
@@ -367,18 +384,22 @@ function done(m) {
   scroll();
 }
 
+function answerCard(card, choice) {
+  card.dataset.done = '1';
+  card.querySelector('.row')?.replaceWith(h('div', { class: 'muted' }, `→ ${choice}`));
+}
 function permission(m) {
-  const card = h('div', { class: 'step perm ' + (m.kind ?? '') },
+  const card = h('div', { class: 'step perm ' + (m.kind ?? ''), 'data-id': m.id },
     h('div', { class: 'ptitle' }, m.kind === 'bash' ? 'Run command?' : m.kind === 'edit' ? `Apply ${m.title}?` : m.title),
     m.kind === 'plan' ? h('div', { class: 'text', innerHTML: '' }) : h('pre', { class: m.kind === 'bash' ? 'term' : '' }, m.detail),
     h('div', { class: 'row' }, ...m.choices.map((c, i) => h('button', {
       class: i === 0 ? 'primary' : '', onclick: () => {
         send('permission', { id: m.id, choice: c });
-        card.dataset.done = '1';
-        card.querySelector('.row').replaceWith(h('div', { class: 'muted' }, `→ ${c}`));
+        answerCard(card, c);
       },
     }, c)), m.path ? h('button', { class: 'link', onclick: () => send('openDiff', { path: m.path }) }, 'Open diff') : null));
   if (m.kind === 'plan') card.children[1].innerHTML = md(m.detail);
+  if (m.answered !== undefined) answerCard(card, m.answered || 'dismissed');
   steps().append(card);
   S.stream = null;
   scroll();
@@ -405,16 +426,20 @@ function refreshCards(supersede = false) {
 function question(m) {
   const picked = m.questions.map(() => new Set());
   const other = m.questions.map(() => '');
-  const card = h('div', { class: 'step perm question' });
+  const card = h('div', { class: 'step perm question', 'data-id': m.id });
   const answerOf = i => [...picked[i]].map(k => k === '__other' ? other[i].trim() : k).filter(Boolean).join(', ');
   const submit = h('button', { class: 'primary', disabled: true, onclick: () => finish(true) }, 'Submit');
   const refresh = () => { submit.disabled = !m.questions.every((_, i) => answerOf(i)); };
   const finish = ok => {
     const answers = Object.fromEntries(m.questions.map((q, i) => [q.question, answerOf(i)]));
     send('permission', { id: m.id, choice: ok ? JSON.stringify(answers) : 'deny' });
-    card.dataset.done = '1';
-    card.replaceChildren(...m.questions.map(q => h('div', {}, h('span', { class: 'muted' }, q.header + ': '), ok ? answers[q.question] : '(skipped)')));
+    showAnswers(ok ? answers : undefined);
   };
+  const showAnswers = answers => {
+    card.dataset.done = '1';
+    card.replaceChildren(...m.questions.map(q => h('div', {}, h('span', { class: 'muted' }, q.header + ': '), answers ? answers[q.question] : '(skipped)')));
+  };
+  card.answer = choice => { let a; try { a = JSON.parse(choice); } catch { a = undefined; } showAnswers(a && typeof a === 'object' ? a : undefined); };
   m.questions.forEach((q, i) => {
     const opts = h('div', { class: 'options' });
     const paint = () => opts.querySelectorAll('.opt').forEach(b => {
@@ -442,6 +467,7 @@ function question(m) {
     card.append(h('div', { class: 'qhead' }, h('span', { class: 'badge' }, q.header), q.multiSelect ? h('span', { class: 'muted' }, ' · pick any') : null), h('div', { class: 'ptitle' }, q.question), opts);
   });
   card.append(h('div', { class: 'row' }, submit, h('button', { class: 'link', onclick: () => finish(false) }, 'Skip')));
+  if (m.answered !== undefined) card.answer(m.answered);
   steps().append(card);
   S.stream = null;
   scroll();
@@ -490,21 +516,73 @@ function renderHistory() {
   const q = $('#search').value.toLowerCase();
   const list = S.sessions.filter(s => s.title.toLowerCase().includes(q));
   $('#sessions').replaceChildren(...(list.length ? list.map(s => h('div', { class: 'session' + (s.current ? ' current' : ''), onclick: () => { toggleHistory(false); send('openSession', { id: s.id }); } },
-    h('div', { class: 'stitle' }, s.title),
+    h('div', { class: 'stitle' }, s.running ? h('span', { class: 'badge running', title: 'Claude is working in this conversation' }, '● ') : null, s.title),
     h('div', { class: 'muted' }, [ago(s.time), s.branch && `⎇ ${s.branch}`, s.size && fmtSize(s.size)].filter(Boolean).join(' · ')))) : [h('div', { class: 'muted pad' }, 'No conversations for this folder yet.')]));
 }
 
 // ---------- Messages from extension ----------
-function setBusy(b) {
+function setBusy(b, quiet = false) {
   S.busy = b;
   const go = $('#go');
   setIcon(go, b ? 'stop' : 'send');
   go.classList.toggle('busy', b);
   go.title = b ? 'Stop' : 'Send (Enter)';
-  if (b) { S.started = Date.now(); steps().append(h('div', { class: 'working' }, h('span', { class: 'dot' }), ' Working…')); }
+  if (b && !quiet) { S.started = Date.now(); steps().append(h('div', { class: 'working' }, h('span', { class: 'dot' }), ' Working…')); }
+  if (!b) $('.working', log)?.remove();
+}
+
+// ---------- Conversations: snapshot + numbered deltas, background activity ----------
+/** Replaces the view with one conversation's state (on switching, or when the panel was recreated). */
+function applySnapshot(m) {
+  const switched = m.conversationId !== S.conversationId;
+  if (switched && S.conversationId) { clearTimeout(draftTimer); send('draft', { text: $('#input').value }); }   // keep the unsent text of the one we leave
+  S.conversationId = m.conversationId;
+  S.seq = m.seq;
+  const st = m.state;
+  log.replaceChildren();
+  toolEls.clear();
+  S.turn = null; S.stream = null;
+  setBusy(false, true);
+  $('#title').textContent = st.title;
+  $('#mode').value = st.mode;
+  $('#effort').value = st.effort;
+  if ([...$('#model').options].some(o => o.value === st.model)) $('#model').value = st.model;
+  toggleHistory(false);
+  S.replaying = true;
+  try { for (const ev of st.events) handle(ev); } finally { S.replaying = false; }
+  if (!log.querySelector('section.turn')) showEmpty();
+  if (switched) { const t = $('#input'); t.value = st.draft ?? ''; autosize(); }
+  requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
+  renderActivity();
+}
+
+/** Other conversations that are working, waiting for approval, or were interrupted: click one to show it. */
+function renderActivity(m) {
+  if (m) S.activity = m.conversations;
+  const list = S.activity.filter(c => c.conversationId !== S.conversationId);
+  const el = $('#activity');
+  el.classList.toggle('hidden', !list.length);
+  el.replaceChildren(...list.map(c => h('button', {
+    class: 'act ' + c.status + (c.pendingApprovals ? ' approval' : ''),
+    title: c.pendingApprovals ? `${c.title}: waiting for your approval` : `${c.title}: ${c.status}`,
+    onclick: () => send('switchTo', { conversationId: c.conversationId }),
+  }, h('span', { class: 'dot' }), h('span', { class: 'name' }, c.title || 'New chat'),
+    c.pendingApprovals ? h('span', { class: 'count' }, String(c.pendingApprovals)) : null)));
 }
 
 window.addEventListener('message', ({ data: m }) => {
+  if (m.type === 'snapshot') return applySnapshot(m);
+  if (m.type === 'activity') return renderActivity(m);
+  if (m.type === 'delta') {
+    if (m.conversationId !== S.conversationId) return;                                     // not the conversation shown
+    if (m.seq !== S.seq + 1) return send('resync', { conversationId: m.conversationId }); // a gap: ask for a snapshot
+    S.seq = m.seq;
+    return handle(m.event);
+  }
+  handle(m);
+});
+
+function handle(m) {
   switch (m.type) {
     case 'init': {
       S.models = m.models;
@@ -549,7 +627,12 @@ window.addEventListener('message', ({ data: m }) => {
       break;
     }
     case 'busy': setBusy(m.value); break;
-    case 'delta': delta(m.text); break;
+    case 'textDelta': delta(m.text); break;
+    case 'answered': {
+      const card = log.querySelector(`.perm[data-id="${CSS.escape(m.id)}"]`);
+      if (card && !card.dataset.done) { if (card.answer) card.answer(m.choice); else answerCard(card, m.choice || 'dismissed'); }
+      break;
+    }
     case 'assistantText': assistantText(m.text); break;
     case 'tool': addTool(m); break;
     case 'toolResult': {
@@ -569,7 +652,7 @@ window.addEventListener('message', ({ data: m }) => {
     case 'attachImage': addImage(m.image); break;
     case 'addRef': addRef(m.ref); break;
     case 'commands': S.commands = m.commands.sort((a, b) => a.name.localeCompare(b.name)); updateMenu(); break;
-    case 'activeFile': if (m.name !== S.activeFile) S.attach = false; S.activeFile = m.name; renderCtx(); break;
+    case 'activeFile': if (m.name !== S.activeFile) S.attach = false; S.activeFile = m.name; S.selLines = m.lines ?? null; renderCtx(); renderAttachments(); break;
     case 'mic': {
       S.mic = m.state;
       const b = $('#mic');
@@ -581,7 +664,7 @@ window.addEventListener('message', ({ data: m }) => {
     }
     case 'error': (S.turn ? steps() : log).append(h('div', { class: 'step error' }, m.text)); scroll(); break;
   }
-});
+}
 
 document.addEventListener('click', e => {
   const t = /** @type {HTMLElement} */ (e.target);

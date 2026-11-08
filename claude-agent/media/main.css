@@ -143,6 +143,7 @@ button.send.busy { background: var(--vscode-button-secondaryBackground); color: 
 .attachments { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .ref { display: inline-flex; align-items: center; gap: 2px; max-width: 14em; height: 24px; padding: 0 2px 0 8px; border-radius: 12px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.9em; }
 .ref button { padding: 0 5px; min-width: 0; height: 20px; color: inherit; }
+.ref.sel { max-width: 22em; }
 .thumb { position: relative; }
 .thumb img { height: 48px; max-width: 96px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); display: block; }
 .thumb button { position: absolute; top: -7px; right: -7px; min-width: 0; height: 18px; width: 18px; padding: 0; border-radius: 50%; background: var(--vscode-editorWidget-background); border: 1px solid var(--line); font-size: 10px; }
@@ -198,3 +199,13 @@ footer { position: relative; }
 .mdtable tbody tr:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .mdtable .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .step.text hr { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
+
+/* Other conversations that are working, waiting for approval, or were interrupted (click to show). */
+.activity { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.activity .act { display: inline-flex; align-items: center; gap: 5px; max-width: 14em; padding: 2px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--vscode-foreground); font-size: 11px; }
+.activity .act .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity .act .dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--vscode-progressBar-background, var(--accent)); }
+.activity .act.interrupted .dot, .activity .act.failed .dot { background: var(--vscode-errorForeground); }
+.activity .act.approval { border-color: var(--vscode-editorWarning-foreground); }
+.activity .act .count { padding: 0 5px; border-radius: 8px; background: var(--vscode-editorWarning-foreground); color: var(--vscode-editor-background); font-weight: 600; }
+.badge.running { color: var(--vscode-progressBar-background, var(--accent)); }

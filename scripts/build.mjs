@@ -33,7 +33,19 @@ if (Number(process.versions.node.split('.')[0]) !== 24) {
 process.env.NODE_OPTIONS = [process.env.NODE_OPTIONS, '--dns-result-order=ipv4first --network-family-autoselection-attempt-timeout=5000'].filter(Boolean).join(' ');
 
 // 1. Code - OSS source at the pinned commit (Git LFS files are only test fixtures; skip them).
-if (!fs.existsSync(path.join(FORK, '.git'))) {
+// An existing checkout is only inspected, never fetched, reset or replaced: it must already be at VSCODE_COMMIT.
+if (fs.existsSync(path.join(FORK, '.git'))) {
+  let head = '';
+  try { head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: FORK, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { /* reported below */ }
+  if (head !== VSCODE_COMMIT) {
+    console.error(`${FORK} is at ${head || 'an unreadable commit'}, but this build needs Code - OSS ${VSCODE_COMMIT}.\n`
+      + 'Check it out there yourself (git -C vscode-fork checkout <commit>), or move vscode-fork/ away so the build downloads the pinned version.');
+    process.exit(1);
+  }
+} else if (fs.existsSync(FORK) && fs.readdirSync(FORK).length) {
+  console.error(`${FORK} exists but is not a git checkout. Move it away so the build can download Code - OSS ${VSCODE_COMMIT}.`);
+  process.exit(1);
+} else {
   console.log(`Downloading Code - OSS (${VSCODE_COMMIT})…`);
   const git = (...a) => execFileSync('git', a, { cwd: FORK, stdio: 'inherit', env: { ...process.env, GIT_LFS_SKIP_SMUDGE: '1' } });
   fs.mkdirSync(FORK, { recursive: true });

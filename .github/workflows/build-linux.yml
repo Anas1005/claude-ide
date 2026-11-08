@@ -53,8 +53,43 @@ jobs:
           npm run typecheck
           npm test
 
-      - name: Build Claude IDE (downloads Code - OSS at the pinned commit, applies patches, builds the tarball)
-        run: node scripts/build.mjs --arch x64 --package
+      # Native modules are compiled against Electron's headers. Like Microsoft's own Linux CI
+      # (vscode-fork/build/azure-pipelines/linux/product-build-linux-node-modules.yml), use the pinned source's
+      # setup-env.sh: Chromium clang + Electron's libc++ + a glibc 2.28 sysroot, not the runner's system GCC.
+      - name: Code - OSS at the pinned commit (build.mjs verifies and reuses this checkout)
+        run: |
+          COMMIT=$(grep -o "VSCODE_COMMIT = '[0-9a-f]\{40\}'" scripts/build.mjs | grep -o '[0-9a-f]\{40\}')
+          test -n "$COMMIT"
+          mkdir vscode-fork
+          cd vscode-fork
+          git init -q
+          git remote add origin https://github.com/microsoft/vscode.git
+          GIT_LFS_SKIP_SMUDGE=1 git fetch --depth 1 origin "$COMMIT"
+          git -c filter.lfs.smudge= -c filter.lfs.process= -c filter.lfs.required=false checkout -q FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: Code - OSS build-script dependencies (needed by setup-env.sh)
+        working-directory: vscode-fork/build
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm ci
+
+      - name: Build Claude IDE with the Code - OSS Linux toolchain (applies patches, builds the tarball)
+        env:
+          VSCODE_ARCH: x64
+          npm_config_arch: x64
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # One shell: setup-env.sh exports CC, CXX, CXXFLAGS and LDFLAGS (and writes ~/.gyp/include.gypi), and they
+          # apply to everything below, including the npm ci of Code - OSS that build.mjs runs before gulp.
+          cd vscode-fork
+          source build/azure-pipelines/linux/setup-env.sh
+          case "$CC" in *CR_Clang/bin/clang*) echo "CC=$CC" ;; *) echo "Chromium clang is not set up (CC=$CC)" >&2; exit 1 ;; esac
+          # As Microsoft's pipeline does: install the Electron headers and Code - OSS's header overlay before
+          # npm ci, so native modules are never compiled against unpatched headers.
+          node build/npm/preinstall.ts
+          cd ..
+          node scripts/build.mjs --arch x64 --package
 
       - name: Launch test (window opens, Claude panel loads, no warnings)
         run: xvfb-run -a node scripts/smoke-test.mjs --arch x64

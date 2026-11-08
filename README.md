@@ -76,6 +76,7 @@ The official [Claude Code extension](https://code.claude.com/docs/en/vs-code) is
 **Everything else**
 - **Four permission modes:** *Auto* (apply now, undo per file), *Ask* (stage everything for review), *Ask each edit* (approve before writing), *Plan* (read-only until you approve the plan)
 - **Past conversations** for the open folder, searchable, resumable, shared with the `claude` CLI
+- **Several conversations at once:** switching chats, starting a new one or hiding the panel never stops another conversation; Stop only stops the one shown. Conversations that are working, waiting for your approval, or were interrupted appear as badges above the chat (click to open). Up to `claudeIde.maxConcurrentRunning` (default 4) run at the same time, the rest wait in a queue. Two conversations editing the same file take turns, and rejecting one conversation's change never undoes another's accepted work.
 - **Model + effort pickers**, cost and token count per turn, Stop at any time
 - **Current-file chip:** one click to include the open file and your selection
 - **Keyboard:** `⌘⏎` accept file · `⌘⌫` reject file · `⌥⏎` accept change · `⇧⌥⌫` reject change · `⌥]` / `⌥[` next/previous change · `⌘⇧⏎` accept all
@@ -95,7 +96,7 @@ Get the latest **Claude IDE** from [**Releases**](https://github.com/error404sus
 | `claude-agent-….vsix` | Just the extension, for VS Code, Cursor, Antigravity or any VS Code-based editor |
 
 **Before first launch:**
-1. Install [Claude Code](https://code.claude.com/docs/en/setup) and sign in once in a terminal: run `claude`, then `/login`. Claude IDE uses that login; you can also use an API key via *Claude: Set API Key*. On Windows use the native installer (it puts `claude.exe` in `%USERPROFILE%\\.local\\bin`).
+1. Install [Claude Code](https://code.claude.com/docs/en/setup) and sign in once in a terminal: run `claude`, then `/login`. Claude IDE uses that login; you can also use an API key via *Claude: Set API Key*. On Windows both the native installer (`claude.exe` in `%USERPROFILE%\\.local\\bin`) and `npm i -g @anthropic-ai/claude-code` work: the npm `claude.cmd` is never run through a shell; the program it points to is started directly. Set `claudeIde.claudePath` for other locations. `CLAUDE_CONFIG_DIR` is honoured (sign-in, transcripts and history).
 2. The apps aren't code-signed yet, so the system warns on first launch.
    - **macOS:** right-click **Claude IDE** in Applications → **Open** → **Open**, or run:
      ```sh
@@ -148,9 +149,14 @@ claude-agent/                  the extension (runs in any VS Code-based editor)
   src/review.ts                review stack: snapshots before each edit, shell-command change detection, checkpoints,
                                Changes tree, decorations, commands, persistence across reloads
   src/hunks.ts                 per-change (hunk) accept / reject, byte-exact
+  src/remoteGuard.ts           the notice shown in remote windows when Remote-SSH support is off
+  src/remote/                  Remote-SSH mode: in-process MCP tools, approval policy, remote review backend
   src/voice.ts                 offline dictation (ffmpeg + whisper.cpp)
   media/                       chat panel UI
   themes/claude-ide-dark.json  the Claude IDE Dark theme
+claude-agent-remote/           the Remote-SSH host side (installed on each server as a VSIX; not part of the desktop app)
+  src/extension.ts             command bridge handlers (claudeIde.remote.*), remote API version
+  src/core.ts, files.ts, …     paths, credential checks, files, search, processes, git, review snapshots
 fork-patches/
   claudeReview.contribution.ts inline review UI in the editor core (removed-line zones, per-change buttons, floating bar)
                                and the chat drop handler
@@ -163,12 +169,40 @@ docs/                          screenshots, demo video and its source
 
 Before Claude edits a file, a `PreToolUse` hook records the original. The edit then happens for real, so Claude always sees a consistent disk. The review UI compares the original with the current file, and *Accept* / *Reject* either keep the new content or write the original back, per change or per file. Shell commands are handled the same way by diffing a workspace snapshot taken before and after each command.
 
+## Remote-SSH (experimental)
+
+Claude IDE can work on a project on a Linux machine over Remote-SSH while Claude, the Claude Code CLI and your sign-in stay on your computer. Enable it with `"claudeIde.experimental.remoteSsh": true` in your user settings, install the **claude-agent-remote** extension on the remote host (built from `claude-agent-remote/`, see below), and reload the window. Without the setting, remote windows show a notice and nothing starts.
+
+```
+Claude (local CLI) ─ in-process MCP tools (local) ─ VS Code command bridge ─ claude-agent-remote (on the SSH host) ─ remote files, processes, git
+```
+
+- **15 tools**: `read_file` (text, and PNG/JPEG/GIF/WebP images up to 5 MB), `list_directory`, `stat`, `search_files` (by name and/or glob such as `**/*.ts`), `search_content`, `write_file`, `apply_patch`, `file_operation`, `execute_command`, `process_status`, `terminate_process`, `git_status`, `git_diff`, `git_log`, `git_operation`. Claude's local file and shell tools are switched off, so nothing happens on your computer by mistake.
+- **Any path on the remote host**, as with Claude Code itself: absolute paths anywhere (other projects included), paths relative to the workspace root, and `~`. No need to reopen the window on another folder. The remote user's own OS permissions are the boundary; symbolic links are resolved before any check.
+- **Security** is enforced on the remote host: atomic writes, bounded output and timeouts, credential locations (`~/.ssh`, `~/.aws`, `~/.gnupg`, `/etc/shadow`, …) only with your approval of that call, never deleting `/`, your home or the workspace root, and privilege escalation only with your explicit approval of that exact command.
+- **Approval modes** work as locally, wherever the files are: *Auto* runs operations and asks for risky ones (sudo, `rm -rf`, `git push --force`, host-wide commands, credential files); *Ask* asks for commands, deletes and git changes; *Ask each edit* asks for every change; *Plan* changes nothing.
+- **Review** is the same as for local files: every change Claude makes (edits, created/deleted/moved files, and files changed by commands it runs) shows inline with removed lines and per-change Accept/Reject, in the Changes view, and with Accept All / Reject All. Pending reviews survive a reload. Rejecting checks the remote file first and never discards edits made after Claude's change without asking. This includes files outside the workspace. Command changes are recorded under the workspace root and the command's working folder; the tool result says when a command names other paths, whose changes are not reviewed.
+- **Project instructions**: the remote workspace's `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md` (40 KB each, trusted workspaces only) are given to Claude for every prompt. `@imports`, parent folders and remote project settings, hooks, commands and skills are not loaded.
+- **Sub-agents** (Agent tool) work with the remote tools only (`remote-general`, `remote-explore`): their calls go through the same approvals, credential prompts and review as the conversation's own, their commands belong to that conversation, and Stop cancels them.
+- **Editor context**: *Include current file* sends the active remote editor's path and selection (any file on the same host); files from the remote host can be attached from anywhere on it.
+- **Versions**: Claude Agent 0.6.x needs claude-agent-remote 0.6.0 (API 6) for images and glob search; with 0.5.0 everything else works and those two say so. Older remotes are refused with a message.
+
 ## Tests
 
 ```sh
 cd claude-agent
-npm test        # per-change accept/reject logic
+npm test        # per-change accept/reject logic, Remote-SSH tools, approval policy, remote review (uses the remote extension next door)
 npm run e2e     # launches VS Code and drives the real agent through 16 end-to-end checks
+node test/e2e/remote-review-live.mjs        # Remote-SSH: the real CLI edits, builds and is reviewed (small real model call)
+node test/e2e/remote-permissions-live.mjs   # Remote-SSH: every approval mode with the real CLI (small real model calls)
+node test/e2e/remote-outside-workspace-live.mjs  # Remote-SSH: a second project outside the workspace, per mode, and a credential prompt (small real model calls)
+node test/e2e/remote-parity-live.mjs        # Remote-SSH: CLAUDE.md, images, glob, editor context, attachments, sub-agents (small real model calls)
+node test/e2e/multi-conversation-live.mjs   # two conversations at once: switching never interrupts, Stop only stops its own (small real model calls)
+
+cd ../claude-agent-remote
+npm install     # once: TypeScript, @types, vsce
+npm test        # the remote extension on real files, processes and git (the Local Agent's remote tests use its out/ too)
+npm run package # builds claude-agent-remote-<version>.vsix: install it on each SSH host (Install from VSIX in a Remote-SSH window)
 ```
 
 The end-to-end suite covers staging edits, shell-command changes (`sed -i`), Reject All restoring byte-identical files, per-change accept/reject, persistence across reload, history and resume, Auto mode undo, checkpoints, Stop mid-turn, *Ask each edit*, Plan mode approval, and multiple-choice questions. It runs through a symlinked workspace path on purpose.

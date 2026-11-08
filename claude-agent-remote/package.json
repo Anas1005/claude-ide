@@ -1,0 +1,76 @@
+{
+  "name": "claude-agent-remote",
+  "displayName": "Claude Agent Remote",
+  "description": "Remote Linux workspace execution provider for Claude Agent",
+  "version": "0.6.0",
+  "publisher": "claude-ide",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "main": "./out/extension.js",
+  "scripts": {
+    "vscode:prepublish": "tsc -p ./",
+    "compile": "tsc -p ./",
+    "test": "tsc -p ./ && node --test test/*.test.mjs",
+    "package": "vsce package --no-dependencies --allow-missing-repository -o claude-agent-remote-$npm_package_version.vsix"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onCommand:claudeIde.remote.exec.start",
+    "onCommand:claudeIde.remote.exec.status",
+    "onCommand:claudeIde.remote.exec.terminate",
+    "onCommand:claudeIde.remote.fs.applyPatch",
+    "onCommand:claudeIde.remote.fs.fileOperation",
+    "onCommand:claudeIde.remote.fs.listDirectory",
+    "onCommand:claudeIde.remote.fs.readFile",
+    "onCommand:claudeIde.remote.fs.searchContent",
+    "onCommand:claudeIde.remote.fs.searchFiles",
+    "onCommand:claudeIde.remote.fs.snapshotBegin",
+    "onCommand:claudeIde.remote.fs.snapshotDiff",
+    "onCommand:claudeIde.remote.fs.snapshotDiscard",
+    "onCommand:claudeIde.remote.fs.stat",
+    "onCommand:claudeIde.remote.fs.writeFile",
+    "onCommand:claudeIde.remote.getInfo",
+    "onCommand:claudeIde.remote.git.diff",
+    "onCommand:claudeIde.remote.git.log",
+    "onCommand:claudeIde.remote.git.operation",
+    "onCommand:claudeIde.remote.git.status"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeIde.remote.getInfo",
+        "title": "Claude IDE: Get Remote Host Information"
+      },
+      {
+        "command": "claudeIde.remote.fs.readFile",
+        "title": "Claude IDE: Remote FS Read File"
+      },
+      {
+        "command": "claudeIde.remote.fs.writeFile",
+        "title": "Claude IDE: Remote FS Write File"
+      },
+      {
+        "command": "claudeIde.remote.fs.listDirectory",
+        "title": "Claude IDE: Remote FS List Directory"
+      },
+      {
+        "command": "claudeIde.remote.fs.stat",
+        "title": "Claude IDE: Remote FS Stat"
+      },
+      {
+        "command": "claudeIde.remote.fs.searchFiles",
+        "title": "Claude IDE: Remote FS Search Files"
+      }
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "1.90.0",
+    "@vscode/vsce": "3.9.2",
+    "typescript": "6.0.3"
+  }
+}

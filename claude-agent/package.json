@@ -2,7 +2,7 @@
   "name": "claude-agent",
   "displayName": "Claude Agent",
   "description": "Claude Code agent panel with inline review of every change, plus the Claude IDE Dark theme",
-  "version": "0.1.2",
+  "version": "0.6.2",
   "publisher": "local",
   "license": "MIT",
   "private": true,
@@ -10,6 +10,9 @@
     "vscode": "^1.90.0"
   },
   "main": "./out/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -320,10 +323,23 @@
           "default": "",
           "description": "Path to a whisper.cpp model. Empty = ~/.claude-ide/whisper/ggml-base.en.bin"
         },
+        "claudeIde.experimental.remoteSsh": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "markdownDescription": "Experimental: use Claude in Remote-SSH windows. Claude and your sign-in stay on this computer; files, commands and git run on the remote host through the claude-agent-remote extension (install 0.6.0 there). Reload the window after changing. When off, Remote-SSH windows show a notice instead."
+        },
         "claudeIde.resumeLastConversation": {
           "type": "boolean",
           "default": true,
           "description": "Open the most recent conversation for the folder when the window opens."
+        },
+        "claudeIde.maxConcurrentRunning": {
+          "type": "integer",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "description": "How many conversations can run Claude at the same time in a window. Further prompts wait in a queue. Takes effect after a window reload."
         }
       }
     },
@@ -337,7 +353,8 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.283",
-    "diff": "^8.0.2"
+    "diff": "^8.0.2",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

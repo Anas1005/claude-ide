@@ -2,11 +2,15 @@
 vscode-fork/
 VSCode-darwin-arm64/
 VSCode-*/
+vscode-reh-*/
 
 # Extension build / test artifacts
 claude-agent/node_modules/
 claude-agent/out/
 claude-agent/.vscode-test/
+claude-agent-remote/node_modules/
+claude-agent-remote/out/
+claude-agent-remote/*.tsbuildinfo
 *.vsix
 
 # Video work files (final assets live in docs/)

@@ -9,7 +9,7 @@ import { ALL_REMOTE_TOOLS, READ_ONLY_TOOLS } from './permissions';
 
 export type WorkspaceMode = 'local' | 'remoteSsh' | 'guard';
 
-/** Local windows run as before; Remote-SSH runs remote mode only when the experimental setting is on; every other remote keeps the guard. */
+/** Local windows run as before; Remote-SSH runs remote mode unless the setting is turned off; every other remote keeps the guard. */
 export function workspaceMode(remoteName: string | undefined, remoteSshEnabled: boolean): WorkspaceMode {
   if (!remoteName) return 'local';
   return remoteName === SSH_REMOTE_NAME && remoteSshEnabled ? 'remoteSsh' : 'guard';

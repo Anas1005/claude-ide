@@ -121,6 +121,26 @@ if (platform === 'darwin') {
 } else {
   console.log(`\nBuilt ${outDir}`);
   if (doPackage) {
+    // The matching Remote-SSH server (with the Remote Agent built in), served to Remote-SSH from inside the app.
+    if (arch === 'x64') {
+      run(`npm run gulp vscode-reh-linux-${arch}-min`, FORK, archEnv);
+      const agent = path.join(ROOT, 'claude-agent-remote');
+      if (!fs.existsSync(path.join(agent, 'node_modules'))) run('npm ci', agent);
+      run('npm run compile', agent);
+      const reh = `vscode-reh-linux-${arch}`, server = `vscode-server-linux-${arch}`;   // Remote-SSH unpacks vscode-server*/
+      const dest = path.join(ROOT, reh, 'extensions', 'claude-agent-remote');
+      fs.rmSync(dest, { recursive: true, force: true });
+      fs.cpSync(path.join(agent, 'out'), path.join(dest, 'out'), { recursive: true, filter: src => !src.endsWith('.map') });
+      const pkg = JSON.parse(fs.readFileSync(path.join(agent, 'package.json'), 'utf8'));
+      for (const k of ['scripts', 'devDependencies']) delete pkg[k];
+      fs.writeFileSync(path.join(dest, 'package.json'), JSON.stringify(pkg, null, 2));
+      fs.rmSync(path.join(ROOT, reh, 'extensions', 'copilot'), { recursive: true, force: true });
+      fs.mkdirSync(path.join(RES, 'server'), { recursive: true });
+      fs.rmSync(path.join(ROOT, server), { recursive: true, force: true });
+      fs.renameSync(path.join(ROOT, reh), path.join(ROOT, server));
+      run(`tar -czf "${path.join(RES, 'server', `${server}.tar.gz`)}" -C "${ROOT}" "${server}"`);
+      fs.renameSync(path.join(ROOT, server), path.join(ROOT, reh));
+    }
     fs.mkdirSync(release, { recursive: true });
     run(`tar -czf "${path.join(release, `${base}-Linux-${arch}.tar.gz`)}" -C "${ROOT}" "VSCode-linux-${arch}"`);
   }

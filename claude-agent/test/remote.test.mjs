@@ -194,10 +194,10 @@ test('a new MCP server instance is created for every call', () => {
 
 // ---- remote mode policy ----
 
-test('feature flag: off by default; only Remote-SSH can enable remote mode; other remotes keep the guard', () => {
+test('feature flag: on by default; only Remote-SSH can enable remote mode; other remotes keep the guard', () => {
   const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const setting = pkg.contributes.configuration.properties['claudeIde.experimental.remoteSsh'];
-  assert.deepEqual([setting.default, setting.scope], [false, 'application']);
+  assert.deepEqual([setting.default, setting.scope], [true, 'application']);
   assert.deepEqual([
     mode.workspaceMode(undefined, false), mode.workspaceMode(undefined, true),
     mode.workspaceMode('ssh-remote', false), mode.workspaceMode('ssh-remote', true),

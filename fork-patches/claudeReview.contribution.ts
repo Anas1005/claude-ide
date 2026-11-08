@@ -16,7 +16,9 @@ import { EditorContributionInstantiation, registerEditorContribution } from '../
 import { EditorOption } from '../../../../editor/common/config/editorOptions.js';
 import { IEditorContribution } from '../../../../editor/common/editorCommon.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
+import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { extractEditorsDropData } from '../../../../platform/dnd/browser/dnd.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 
 interface Hunk { start: number; added: number; removed: number; removedText: string }
@@ -250,3 +252,6 @@ class ClaudeDropContribution extends Disposable implements IWorkbenchContributio
 }
 
 registerWorkbenchContribution2(ClaudeDropContribution.ID, ClaudeDropContribution, WorkbenchPhase.AfterRestored);
+
+// Remote-SSH's Exec Server path needs a CLI that only Microsoft publishes; legacy mode installs the server this app bundles.
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerDefaultConfigurations([{ overrides: { 'remote.SSH.useExecServer': false } }]);

@@ -68,6 +68,52 @@ jobs:
           git -c filter.lfs.smudge= -c filter.lfs.process= -c filter.lfs.required=false checkout -q FETCH_HEAD
           test "$(git rev-parse HEAD)" = "$COMMIT"
 
+      # Electron release assets (Electron's libc++ for setup-env.sh's libcxx-fetcher, the Electron zip for gulp) are
+      # fetched by @electron/get from https://github.com/electron/electron/releases/download/v<version>/…, which
+      # returns 504 for most assets of this release, and @electron/get's stream download never retries. Fetch the
+      # same files through the GitHub API into @electron/get's own cache instead; it then uses them and still
+      # verifies them against the release's SHASUMS256.txt. Cached across runs.
+      - name: Electron version
+        id: electron
+        run: echo "version=$(sed -n 's/^target="\(.*\)"$/\1/p' vscode-fork/.npmrc)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Electron download cache
+        id: electron-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-assets-linux-x64-${{ steps.electron.outputs.version }}
+
+      - name: Prefetch Electron release assets through the GitHub API
+        if: steps.electron-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.electron.outputs.version }}
+        run: |
+          test -n "$V"
+          # @electron/get's cache folder for these URLs: sha256 of the release download URL without the file name.
+          DIR="$HOME/.cache/electron/$(printf %s "https://github.com/electron/electron/releases/download/v$V" | sha256sum | cut -d' ' -f1)"
+          mkdir -p "$DIR"
+          for f in SHASUMS256.txt "libcxx-objects-v$V-linux-x64.zip" libcxx_headers.zip libcxxabi_headers.zip "electron-v$V-linux-x64.zip"; do
+            for i in 1 2 3 4 5; do
+              gh release download "v$V" --repo electron/electron --pattern "$f" --dir "$DIR" --clobber && break
+              if [ "$i" = 5 ]; then echo "Could not download $f" >&2; exit 1; fi
+              sleep $((5 * 2 ** i))
+            done
+          done
+          cd "$DIR"
+          grep -E " \*(libcxx-objects-v$V-linux-x64\.zip|libcxx_headers\.zip|libcxxabi_headers\.zip|electron-v$V-linux-x64\.zip)$" SHASUMS256.txt > expected.sha256
+          test "$(wc -l < expected.sha256)" = 4
+          sha256sum -c expected.sha256
+          rm expected.sha256
+
+      - name: Save Electron download cache
+        if: steps.electron-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-assets-linux-x64-${{ steps.electron.outputs.version }}
+
       - name: Code - OSS build-script dependencies (needed by setup-env.sh)
         working-directory: vscode-fork/build
         env:

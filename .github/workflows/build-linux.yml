@@ -149,6 +149,8 @@ jobs:
           V: ${{ steps.electron.outputs.version }}
           # The app's identity on remote hosts (~/.claude-ide-server/bin/<commit>): one per build, so an upgrade installs its own server.
           BUILD_SOURCEVERSION: ${{ github.sha }}
+          # Required once BUILD_SOURCEVERSION is set (extensions/copilot/.esbuild.mts). On Linux it only affects Copilot's build, and product.json still has no quality.
+          VSCODE_QUALITY: stable
         run: |
           # The prefetched Electron release assets, served locally for @electron/get (see the prefetch step).
           python3 -m http.server 8597 --bind 127.0.0.1 --directory "$HOME/electron-mirror" > /dev/null 2>&1 &
